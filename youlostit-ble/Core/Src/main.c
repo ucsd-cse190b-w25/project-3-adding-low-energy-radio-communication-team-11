@@ -20,8 +20,36 @@
 /* Includes ------------------------------------------------------------------*/
 //#include "ble_commands.h"
 #include "ble.h"
+#include "timer.h"
+#include "i2c.h"
+#include "lsm6dsl.h"
 
 #include <stdlib.h>
+#include <string.h>
+
+#define TIMER_PERIOD 50
+#define TIM_UIF 0x1
+
+//movement threshold = 0.1g
+#define THRESHOLD 1638
+
+//maximum wait_cnt before led lights up
+#define MAX_WAIT_CNT 1200
+
+#define LOST_MODE_MSG_INTERVAL 200
+
+/* counts the amount of time the tag is stationary */
+volatile uint32_t stationary_cnt;
+
+/*counts the amount of time the tag has been lost(in lost mode)*/
+volatile uint32_t lost_cnt;
+
+volatile uint8_t signal_read;
+volatile uint8_t signal_lost_msg;
+
+/*boolean that indicate the current operating mode*/
+volatile uint8_t isLost;
+
 
 int dataAvailable = 0;
 
@@ -31,46 +59,204 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_SPI3_Init(void);
 
+
+void TIM2_IRQHandler()
+{
+	//reset update interrupt flag
+	TIM2->SR &= ~TIM_UIF;
+
+	/*stationary counter logic*/
+	if (stationary_cnt >= 200)
+	{
+
+		lost_cnt++;
+		isLost = 0x1;
+	}
+	else
+	{
+		lost_cnt = 0;
+		isLost = 0x0;
+	}
+
+
+
+
+	/* 10 second interval for message */
+	if (lost_cnt % LOST_MODE_MSG_INTERVAL == 1){
+		signal_lost_msg = 1;
+	}
+
+
+	/* signal the accelerometer to read*/
+	signal_read = 0x1;
+
+
+}
+
+int _write(int file, char *ptr, int len) {
+    int i = 0;
+    for (i = 0; i < len; i++) {
+        ITM_SendChar(*ptr++);
+    }
+    return len;
+}
+
+uint8_t DectectMotion(int16_t AccelX, int16_t AccelY, int16_t AccelZ, int16_t prevX, int16_t prevY, int16_t prevZ)
+{
+	if (abs(prevX -AccelX) > THRESHOLD || abs(prevY -AccelY) > THRESHOLD || abs(prevZ -AccelZ) > THRESHOLD){
+		return 1;
+	}
+	else
+		return 0;
+
+}
+
 /**
   * @brief  The application entry point.
   * @retval int
   */
 int main(void)
 {
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
 
-  /* Configure the system clock */
-  SystemClock_Config();
+	/* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+	HAL_Init();
+	/* Configure the system clock */
+	SystemClock_Config();
 
-  /* Initialize all configured peripherals */
-  MX_GPIO_Init();
-  MX_SPI3_Init();
+	/* Initialize all configured peripherals */
+	MX_GPIO_Init();
+	MX_SPI3_Init();
 
-  //RESET BLE MODULE
-  HAL_GPIO_WritePin(BLE_RESET_GPIO_Port,BLE_RESET_Pin,GPIO_PIN_RESET);
-  HAL_Delay(10);
-  HAL_GPIO_WritePin(BLE_RESET_GPIO_Port,BLE_RESET_Pin,GPIO_PIN_SET);
+	//RESET BLE MODULE
+	HAL_GPIO_WritePin(BLE_RESET_GPIO_Port,BLE_RESET_Pin,GPIO_PIN_RESET);
+	HAL_Delay(10);
+	HAL_GPIO_WritePin(BLE_RESET_GPIO_Port,BLE_RESET_Pin,GPIO_PIN_SET);
 
-  ble_init();
+	ble_init();
 
-  HAL_Delay(10);
+	HAL_Delay(10);
 
-  uint8_t nonDiscoverable = 0;
+	uint8_t nonDiscoverable = 0;
+	uint8_t disconnected = 0;
 
-  while (1)
-  {
-	  if(!nonDiscoverable && HAL_GPIO_ReadPin(BLE_INT_GPIO_Port,BLE_INT_Pin)){
-	    catchBLE();
-	  }else{
-		  HAL_Delay(1000);
-		  // Send a string to the NORDIC UART service, remember to not include the newline
-		  unsigned char test_str[] = "youlostit BLE test";
-		  updateCharValue(NORDIC_UART_SERVICE_HANDLE, READ_CHAR_HANDLE, 0, sizeof(test_str)-1, test_str);
-	  }
-	  // Wait for interrupt, only uncomment if low power is needed
-	  //__WFI();
-  }
+
+	stationary_cnt = 0x0;
+	signal_read = 0x0;
+	isLost = 0x0;
+
+	//Enable GPIOA & GPIOB
+	RCC->AHB2ENR |= RCC_AHB2ENR_GPIOAEN;
+	RCC->AHB2ENR |= RCC_AHB2ENR_GPIOBEN;
+
+	//Enable TIM2
+	RCC->APB1ENR1 |= RCC_APB1ENR1_TIM2EN;
+
+	timer_reset(TIM2);
+
+	timer_init(TIM2);
+
+	timer_set_ms(TIM2, TIMER_PERIOD);
+
+	ic2_init();
+
+	lsm6dsl_init();
+
+	int init = 1;
+
+	int16_t AccelX, AccelY, AccelZ;
+	int16_t prevX, prevY, prevZ;
+
+	uint8_t motionDetected = 0;
+
+	while (1)
+	{
+		if(signal_read){
+
+			prevX = AccelX;
+			prevY = AccelY;
+			prevZ = AccelZ;
+
+			lsm6dsl_read_xyz(&AccelX, &AccelY, &AccelZ);
+
+			motionDetected = DectectMotion(AccelX, AccelY, AccelZ, prevX, prevY, prevZ);
+			if (motionDetected){
+				stationary_cnt = 0x0;
+
+				if (!init){
+					disconnectBLE();
+					disconnected = 1;
+				}
+				if (disconnected)
+				{
+					setDiscoverability(0);
+					nonDiscoverable = 1;
+				}
+
+
+
+				//printf("prevXYZ:(%d,%d,%d) ; currentXYZ:(%d,%d,%d)", prevX, prevY, prevZ, AccelX, AccelY, AccelZ);
+			}
+			else {
+				stationary_cnt++;
+			}
+
+			if (isLost){
+
+				if (init){
+					init = 0;
+				}
+				else if (nonDiscoverable){
+					setDiscoverability(1);
+					disconnected = 0;
+					nonDiscoverable = 0;
+
+				}
+
+
+			}
+
+			signal_read = 0x0;
+		}
+
+		if(!nonDiscoverable && HAL_GPIO_ReadPin(BLE_INT_GPIO_Port,BLE_INT_Pin)){
+			catchBLE();
+		}else{
+
+			if (signal_lost_msg){
+
+				unsigned char lost_str1[] = "Peartag: lost for ";
+				unsigned char lost_str2[] = "%08lu seconds";
+				char buffer[17];
+
+				snprintf(buffer, sizeof(buffer), lost_str2, lost_cnt/20);
+
+				updateCharValue(NORDIC_UART_SERVICE_HANDLE, READ_CHAR_HANDLE, 0, sizeof(lost_str1)-1, lost_str1);
+
+				updateCharValue(NORDIC_UART_SERVICE_HANDLE, READ_CHAR_HANDLE, 0, sizeof(buffer)-1, buffer);
+
+
+				printf("lost sec=%d\n", lost_cnt/20);
+				signal_lost_msg = 0;
+			}
+		}
+
+
+
+
+
+
+
+
+
+
+		//HAL_Delay(1000);
+		// Send a string to the NORDIC UART service, remember to not include the newline
+		//unsigned char test_str[] = "youlostit BLE test";
+		//updateCharValue(NORDIC_UART_SERVICE_HANDLE, READ_CHAR_HANDLE, 0, sizeof(test_str)-1, test_str);
+
+		// Wait for interrupt, only uncomment if low power is needed
+		//__WFI();
+	}
 }
 
 /**
