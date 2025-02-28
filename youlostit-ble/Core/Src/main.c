@@ -66,7 +66,7 @@ void TIM2_IRQHandler()
 	TIM2->SR &= ~TIM_UIF;
 
 	/*stationary counter logic*/
-	if (stationary_cnt >= 200)
+	if (stationary_cnt >= MAX_WAIT_CNT)
 	{
 
 		lost_cnt++;
