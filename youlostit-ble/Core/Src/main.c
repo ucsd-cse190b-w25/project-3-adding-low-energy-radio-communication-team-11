@@ -19,24 +19,24 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 //#include "ble_commands.h"
+#include <rtc.h>
 #include "ble.h"
 #include "timer.h"
 #include "i2c.h"
 #include "lsm6dsl.h"
-
 #include <stdlib.h>
 #include <string.h>
 
-#define TIMER_PERIOD 50
+#define TIMER_PERIOD 2000
 #define TIM_UIF 0x1
 
 //movement threshold = 0.1g
 #define THRESHOLD 1638
 
 //maximum wait_cnt before led lights up
-#define MAX_WAIT_CNT 1200
+#define MAX_WAIT_CNT 5
 
-#define LOST_MODE_MSG_INTERVAL 200
+#define LOST_MODE_MSG_INTERVAL 5
 
 /* counts the amount of time the tag is stationary */
 volatile uint32_t stationary_cnt;
@@ -50,6 +50,8 @@ volatile uint8_t signal_lost_msg;
 /*boolean that indicate the current operating mode*/
 volatile uint8_t isLost;
 
+/*RTC handle*/
+RTC_HandleTypeDef hrtc;
 
 int dataAvailable = 0;
 
@@ -60,10 +62,36 @@ static void MX_GPIO_Init(void);
 static void MX_SPI3_Init(void);
 
 
-void TIM2_IRQHandler()
+void OnEnterSleepMode()
 {
-	//reset update interrupt flag
-	TIM2->SR &= ~TIM_UIF;
+	__HAL_RCC_I2C2_CLK_DISABLE();
+	__HAL_RCC_SPI3_CLK_DISABLE();
+
+	__HAL_RCC_GPIOA_CLK_DISABLE();
+	__HAL_RCC_GPIOB_CLK_DISABLE();
+	__HAL_RCC_GPIOC_CLK_DISABLE();
+	__HAL_RCC_GPIOD_CLK_DISABLE();
+	__HAL_RCC_GPIOE_CLK_DISABLE();
+
+}
+
+void OnEnterRunMode()
+{
+	__HAL_RCC_I2C2_CLK_ENABLE();
+	__HAL_RCC_SPI3_CLK_ENABLE();
+
+	__HAL_RCC_GPIOA_CLK_ENABLE();
+	__HAL_RCC_GPIOB_CLK_ENABLE();
+	__HAL_RCC_GPIOC_CLK_ENABLE();
+	__HAL_RCC_GPIOD_CLK_ENABLE();
+	__HAL_RCC_GPIOE_CLK_ENABLE();
+
+}
+
+void HAL_RTCEx_WakeUpTimerEventCallback(RTC_HandleTypeDef *hrtc)
+{
+
+	//printf("Entering Event Callback\n");
 
 	/*stationary counter logic*/
 	if (stationary_cnt >= MAX_WAIT_CNT)
@@ -78,18 +106,21 @@ void TIM2_IRQHandler()
 		isLost = 0x0;
 	}
 
-
-
-
 	/* 10 second interval for message */
 	if (lost_cnt % LOST_MODE_MSG_INTERVAL == 1){
 		signal_lost_msg = 1;
 	}
 
-
 	/* signal the accelerometer to read*/
 	signal_read = 0x1;
 
+
+}
+
+void RTC_WKUP_IRQHandler()
+{
+
+	HAL_RTCEx_WakeUpTimerIRQHandler(&hrtc);
 
 }
 
@@ -123,6 +154,8 @@ int main(void)
 	/* Configure the system clock */
 	SystemClock_Config();
 
+	RTC_Init(&hrtc);
+
 	/* Initialize all configured peripherals */
 	MX_GPIO_Init();
 	MX_SPI3_Init();
@@ -143,19 +176,6 @@ int main(void)
 	stationary_cnt = 0x0;
 	signal_read = 0x0;
 	isLost = 0x0;
-
-	//Enable GPIOA & GPIOB
-	RCC->AHB2ENR |= RCC_AHB2ENR_GPIOAEN;
-	RCC->AHB2ENR |= RCC_AHB2ENR_GPIOBEN;
-
-	//Enable TIM2
-	RCC->APB1ENR1 |= RCC_APB1ENR1_TIM2EN;
-
-	timer_reset(TIM2);
-
-	timer_init(TIM2);
-
-	timer_set_ms(TIM2, TIMER_PERIOD);
 
 	ic2_init();
 
@@ -189,12 +209,13 @@ int main(void)
 				if (disconnected)
 				{
 					setDiscoverability(0);
+					standbyBle();
 					nonDiscoverable = 1;
 				}
 
 
 
-				//printf("prevXYZ:(%d,%d,%d) ; currentXYZ:(%d,%d,%d)", prevX, prevY, prevZ, AccelX, AccelY, AccelZ);
+				printf("prevXYZ:(%d,%d,%d) ; currentXYZ:(%d,%d,%d)", prevX, prevY, prevZ, AccelX, AccelY, AccelZ);
 			}
 			else {
 				stationary_cnt++;
@@ -228,34 +249,38 @@ int main(void)
 				unsigned char lost_str2[] = "%08lu seconds";
 				char buffer[17];
 
-				snprintf(buffer, sizeof(buffer), lost_str2, lost_cnt/20);
+				snprintf(buffer, sizeof(buffer), lost_str2, lost_cnt*2);
 
 				updateCharValue(NORDIC_UART_SERVICE_HANDLE, READ_CHAR_HANDLE, 0, sizeof(lost_str1)-1, lost_str1);
 
 				updateCharValue(NORDIC_UART_SERVICE_HANDLE, READ_CHAR_HANDLE, 0, sizeof(buffer)-1, buffer);
 
 
-				printf("lost sec=%d\n", lost_cnt/20);
+				printf("lost sec=%d\n", lost_cnt*2);
 				signal_lost_msg = 0;
 			}
 		}
 
 
 
+		//Go to STOP0 mode (DEEPSLEEP with MR on)
 
+		//PWR->CR1 |= PWR_CR1_LPR;
 
+		//SCB->SCR &= ~SCB_SCR_SLEEPDEEP_Msk;
 
+/*		HAL_SuspendTick();
 
+		OnEnterSleepMode();
 
+		HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
 
+		OnEnterRunMode();
 
-		//HAL_Delay(1000);
-		// Send a string to the NORDIC UART service, remember to not include the newline
-		//unsigned char test_str[] = "youlostit BLE test";
-		//updateCharValue(NORDIC_UART_SERVICE_HANDLE, READ_CHAR_HANDLE, 0, sizeof(test_str)-1, test_str);
+		HAL_ResumeTick();*/
 
-		// Wait for interrupt, only uncomment if low power is needed
-		//__WFI();
+		//SCB->SCR &= ~SCB_SCR_SLEEPDEEP_Msk;
+
 	}
 }
 
@@ -283,7 +308,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.MSIState = RCC_MSI_ON;
   RCC_OscInitStruct.MSICalibrationValue = 0;
   // This lines changes system clock frequency
-  RCC_OscInitStruct.MSIClockRange = RCC_MSIRANGE_7;
+  RCC_OscInitStruct.MSIClockRange = RCC_CR_MSIRANGE_7;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {

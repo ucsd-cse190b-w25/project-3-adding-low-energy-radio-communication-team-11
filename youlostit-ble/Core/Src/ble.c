@@ -108,6 +108,7 @@
 	 //  HAL_GPIO_WritePin(CPU_LED_GPIO_Port,CPU_LED_Pin,GPIO_PIN_SET);
 	 }
 	 return;
+
  }
 
  void standbyBle() {

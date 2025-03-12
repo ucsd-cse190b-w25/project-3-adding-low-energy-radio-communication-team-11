@@ -9,6 +9,7 @@
 #include "lsm6dsl.h"
 
 #define CTRL1_XL 0x10
+#define CTRL6_C 0x15
 #define INT1_CTRL 0x0D
 
 #define OUTX_L_XL 0x28
@@ -22,11 +23,25 @@
 
 void lsm6dsl_init(){
 
-	uint8_t operating_frequency = 0x60;
+	uint8_t operating_frequency = 0x30;
 	uint8_t interrupt_ctrl = 0x1;
 
 	uint8_t result;
 
+	//set to low Power Mode
+	uint8_t operating_mode = 0x10;
+
+	//get the current CTRL6_C
+	uint8_t ctrl6_c;
+
+
+	result = i2c_transaction(CTRL6_C, 0x1, &ctrl6_c, 1);
+	printf("original ctrl6_c=0x%x\n", ctrl6_c);
+
+
+	ctrl6_c |= operating_mode;
+	result = i2c_transaction(CTRL6_C, 0x0, &ctrl6_c, 1);
+	printf("new ctrl6_c=0x%x\n", ctrl6_c);
 
 
 	result = i2c_transaction(CTRL1_XL, 0x0, &operating_frequency, 1);
