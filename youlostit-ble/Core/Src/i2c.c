@@ -40,7 +40,7 @@ enum ErrorCode{
  *
  * */
 
-void ic2_init(){
+void i2c_init(){
 
 	/*---------Initial setup begin--------------*/
 	RCC->AHB2ENR |= RCC_AHB2ENR_GPIOBEN;

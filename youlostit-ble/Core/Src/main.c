@@ -88,6 +88,20 @@ void OnEnterRunMode()
 
 }
 
+void SwitchToLowFrequency()
+{
+  // Switch to MSI range 0 = 100 kHz to save power.
+  __HAL_RCC_MSI_RANGE_CONFIG(RCC_MSIRANGE_0); // Set MSI to 100KHz
+  SystemCoreClockUpdate();
+}
+
+void SwitchToHighFrequency()
+{
+  // Switch to MSI range 7 = 8 MHz for BLE operations.
+  __HAL_RCC_MSI_RANGE_CONFIG(RCC_MSIRANGE_7); // Set MSI to 8MHz
+  SystemCoreClockUpdate();
+}
+
 void HAL_RTCEx_WakeUpTimerEventCallback(RTC_HandleTypeDef *hrtc)
 {
 
@@ -177,7 +191,7 @@ int main(void)
 	signal_read = 0x0;
 	isLost = 0x0;
 
-	ic2_init();
+	i2c_init();
 
 	lsm6dsl_init();
 
@@ -188,6 +202,8 @@ int main(void)
 
 	uint8_t motionDetected = 0;
 
+
+	SwitchToLowFrequency();
 	while (1)
 	{
 		if(signal_read){
@@ -203,17 +219,19 @@ int main(void)
 				stationary_cnt = 0x0;
 
 				if (!init){
+					SwitchToHighFrequency();
 					disconnectBLE();
 					disconnected = 1;
+					SwitchToLowFrequency();
 				}
 				if (disconnected)
 				{
+					SwitchToHighFrequency();
 					setDiscoverability(0);
 					standbyBle();
 					nonDiscoverable = 1;
+					SwitchToLowFrequency();
 				}
-
-
 
 				printf("prevXYZ:(%d,%d,%d) ; currentXYZ:(%d,%d,%d)", prevX, prevY, prevZ, AccelX, AccelY, AccelZ);
 			}
@@ -227,24 +245,25 @@ int main(void)
 					init = 0;
 				}
 				else if (nonDiscoverable){
+					SwitchToHighFrequency();
 					setDiscoverability(1);
 					disconnected = 0;
 					nonDiscoverable = 0;
-
+					SwitchToLowFrequency();
 				}
-
-
 			}
 
 			signal_read = 0x0;
 		}
 
 		if(!nonDiscoverable && HAL_GPIO_ReadPin(BLE_INT_GPIO_Port,BLE_INT_Pin)){
+			SwitchToHighFrequency();
 			catchBLE();
+			SwitchToLowFrequency();
 		}else{
 
 			if (signal_lost_msg){
-
+				SwitchToHighFrequency();
 				unsigned char lost_str1[] = "Peartag: lost for ";
 				unsigned char lost_str2[] = "%08lu seconds";
 				char buffer[17];
@@ -258,6 +277,7 @@ int main(void)
 
 				printf("lost sec=%d\n", lost_cnt*2);
 				signal_lost_msg = 0;
+				SwitchToLowFrequency();
 			}
 		}
 
