@@ -285,19 +285,20 @@ int main(void)
 
 		//Go to STOP0 mode (DEEPSLEEP with MR on)
 
-		//PWR->CR1 |= PWR_CR1_LPR;
+		PWR->CR1 |= PWR_CR1_LPR;
 
-		//SCB->SCR &= ~SCB_SCR_SLEEPDEEP_Msk;
+//		SCB->SCR &= ~SCB_SCR_SLEEPDEEP_Msk;
 
-/*		HAL_SuspendTick();
+		HAL_SuspendTick();
 
 		OnEnterSleepMode();
 
-		HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
+//		HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
+		HAL_PWREx_EnterSTOP2Mode(PWR_STOPENTRY_WFI);
 
 		OnEnterRunMode();
 
-		HAL_ResumeTick();*/
+		HAL_ResumeTick();
 
 		//SCB->SCR &= ~SCB_SCR_SLEEPDEEP_Msk;
 
